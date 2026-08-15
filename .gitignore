@@ -1,0 +1,14 @@
+node_modules/
+dist/
+server/data/
+*.log
+.DS_Store
+.env
+
+# Build caches
+.vite/
+*.tsbuildinfo
+
+# Per-machine Claude Code settings (absolute paths, local permissions).
+# .claude/launch.json is intentionally tracked — it is the shared dev-server config.
+.claude/settings.local.json
