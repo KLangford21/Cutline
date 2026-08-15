@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
 import { get } from './db.js';
 
-const SECRET = process.env.CUTLINE_SECRET || 'cutline-dev-secret-change-me';
+const secret = process.env.CUTLINE_SECRET;
+if (!secret) throw new Error('CUTLINE_SECRET must be set');
+const SECRET = secret;
 
 /* ---------- passwords (scrypt, no native deps) ---------- */
 

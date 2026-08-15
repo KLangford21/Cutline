@@ -88,9 +88,11 @@ export default function TeeTimes() {
 
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <span className="chip">{club.courses.length} {club.courses.length === 1 ? 'course' : 'courses'}</span>
+                {/* No next tee means either full or the day is simply over — say the
+                    honest thing rather than claiming it is booked out. */}
                 {club.nextTee
                   ? <span className="chip accent"><IconClock /> next {club.nextTee}</span>
-                  : <span className="chip">fully booked today</span>}
+                  : <span className="chip">no times left today</span>}
                 {typeof club.openSlots === 'number' && club.openSlots > 0 && (
                   <span className="chip">{club.openSlots} open today</span>
                 )}

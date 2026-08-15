@@ -35,8 +35,26 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new ApiError("Can't reach Cutline. Check that the server is running.", 0);
   }
 
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(data?.error || 'Something went wrong', res.status);
+  const raw = await res.text();
+  let data: any = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    // Body was not JSON, so it did not come from the API.
+  }
+
+  if (!res.ok) {
+    if (data?.error) throw new ApiError(data.error, res.status);
+    // A non-JSON error body means nothing answered *as* the API — in dev that
+    // is the Vite proxy reporting the API is down, in production a gateway.
+    // Saying so beats a generic shrug.
+    throw new ApiError(
+      res.status >= 500
+        ? "Can't reach the Cutline API. Check the server is running on port 4000."
+        : `That request failed (${res.status}).`,
+      res.status,
+    );
+  }
   return data as T;
 }
 

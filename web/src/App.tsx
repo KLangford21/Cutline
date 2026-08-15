@@ -40,8 +40,9 @@ function TabBar() {
   return (
     <nav className="tabbar">
       {tab('/', 'Play', <IconHome />)}
-      {tab('/tee-times', 'Tee times', <IconFlag />)}
-      <button className="fab" onClick={() => navigate('/new')} aria-label="Start a round">
+      {tab('/rounds', 'Rounds', <IconFlag />)}
+      {/* Booking is the primary action: it holds the slot and sets the round up. */}
+      <button className="fab" onClick={() => navigate('/tee-times')} aria-label="Book a tee time">
         <IconPlus />
       </button>
       {tab('/book', 'Book', <IconBook />)}
