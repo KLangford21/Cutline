@@ -6,9 +6,6 @@ dist/
 .vite/
 *.tsbuildinfo
 
-# Local SQLite database — must never leak into a deployed image.
-server/data/
-
 # Secrets
 .env
 .env.*
