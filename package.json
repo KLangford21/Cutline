@@ -2,7 +2,7 @@
   "name": "cutline",
   "version": "1.0.0",
   "private": true,
-  "description": "Cutline — a social golf scoring app in the spirit of Golf GameBook. Express + SQLite API, React mobile PWA.",
+  "description": "Cutline — a social golf scoring app in the spirit of Golf GameBook. Express + Postgres API, React mobile PWA.",
   "scripts": {
     "setup": "npm install --prefix server && npm install --prefix web",
     "dev:api": "npm run dev --prefix server",

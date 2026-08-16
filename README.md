@@ -34,13 +34,22 @@ under the wordmark and above every ledger and section. If it ever becomes orname
 
 ```
 Keagan/
-├── server/      Express + SQLite API, WebSocket live updates, scoring engine
+├── server/      Express + Postgres API, WebSocket live updates, scoring engine
+│   └── migrations/   Schema, applied in order on boot
 └── web/         React + TypeScript + Vite mobile app
 ```
 
 ## Run it
 
-Node 22.5+ is required (the API uses the built-in `node:sqlite` module — no native build step).
+Node 22+ and a Postgres database. The API talks to Postgres over `pg`, so there is no native
+build step.
+
+Two environment variables are required — the server refuses to start without either:
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Postgres connection string. On Supabase use the **session pooler** (port 5432), not the transaction pooler — the migration runner holds a transaction open across statements, which transaction-mode pooling cannot support. Percent-encode any punctuation in the password. |
+| `CUTLINE_SECRET` | Signs login tokens. Any value will do locally; changing it in production logs every user out. |
 
 ```bash
 npm run setup
@@ -59,9 +68,15 @@ npm run dev:web
 Both processes are needed — the web app talks to the API through Vite's proxy, so if only the
 front end is running every screen fails with "Can't reach Cutline".
 
-Open **http://localhost:5173**. The database seeds itself on first boot with 15 South African
-clubs across six provinces, 18 courses, eight golfers, ~50 bookings spread either side of today
-and three rounds (one still in play).
+The schema applies itself on boot: every unapplied file in `server/migrations` runs in order and
+is recorded, so pointing at an empty database is enough. Outside production the database also
+seeds itself with 15 South African clubs across six provinces, 18 courses, eight golfers,
+~50 bookings spread either side of today and three rounds (one still in play).
+
+> Point local work at its own Supabase project. `DATABASE_URL` is the only thing separating a
+> development run from production, and development seeds demo accounts with a known password.
+
+Open **http://localhost:5173**.
 
 | Sign in as | Email | Password | Sees |
 | --- | --- | --- | --- |
@@ -77,6 +92,29 @@ npm start
 ```
 
 The API then serves the built app too — everything on **http://localhost:4000**.
+
+## Deployment
+
+Live at **https://cutline.fly.dev**, on Fly.io with Supabase Postgres. Pushing to `main` deploys:
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) builds the image on Fly's builders
+and releases it. The repository needs one secret, `FLY_API_TOKEN`; the app needs `CUTLINE_SECRET`
+and `DATABASE_URL` set as Fly secrets.
+
+The `Dockerfile` builds the PWA and serves it from the API process, so one container is the whole
+app.
+
+Two deliberate constraints:
+
+- **Exactly one machine.** `realtime.js` keeps its WebSocket rooms in an in-memory `Map`, so a
+  second instance would split players in the same round across separate room sets and live scoring
+  would quietly stop working between them. Fly provisions a second machine by default — check with
+  `fly status` after any scaling change. Moving room state into Postgres is what would lift this.
+- **`lhr`, not `jnb`.** Supabase is in `eu-west-1` and a request makes several database round
+  trips, so the app sits next to the database rather than next to its users: one slow hop for the
+  user instead of several.
+
+`seed()` is opt-in outside development. Set `SEED_ON_BOOT=true` to load the sample data into a
+deployed environment; leave it unset and the database is left alone on every restart.
 
 ## What's in it
 
@@ -170,8 +208,8 @@ All routes sit under `/api`; everything except `/api/health`, `/api/auth/*` and
 | `GET` `POST` | `/bookings` | Your bookings / make one |
 | `POST` | `/bookings/:id/pay\|cancel\|round` | Settle a share or balance, cancel, start the round |
 
-WebSocket: `ws://host/ws?game=<gameId>` — emits `leaderboard`, `players`, `status` and `post`
-events for that round.
+WebSocket: `ws://host/ws?game=<gameId>` (`wss://` in production) — emits `leaderboard`, `players`,
+`status` and `post` events for that round.
 
 ## Notes
 
@@ -181,7 +219,13 @@ events for that round.
   so a club's books reconcile.
 - Dates are `YYYY-MM-DD` and times `HH:MM`, both local. South Africa is one timezone with no
   daylight saving, so there is no conversion anywhere.
-- `node:sqlite` is synchronous, which is what stops two racing requests overselling the last seat
-  in a tee slot — the availability check and the insert cannot interleave.
+- Two racing requests cannot oversell the last seat in a tee slot: the availability check and the
+  insert run inside one transaction, behind a Postgres advisory lock keyed on the course and date.
+  This used to be free — the old synchronous SQLite driver could not interleave them — and became
+  explicit when the database moved behind a connection pool.
+- Aggregates are cast (`COUNT(*)::int`, `SUM(...)::int`) because Postgres returns bigint and the
+  driver hands bigint back as a string. Uncast, money totals reach the client as text.
+- Searches use `ILIKE`. Postgres `LIKE` is case-sensitive; SQLite's was not.
 - Guests without accounts can be added to any round; they score exactly like registered players.
-- Set `CUTLINE_SECRET` in the environment before deploying — the default is a development value.
+- `CUTLINE_SECRET` and `DATABASE_URL` have no defaults — the server throws on boot without them,
+  rather than starting in a state nobody intended.
