@@ -6,7 +6,7 @@ import { Avatar, Empty, Sheet, Spinner, StatTile, ordinal, relativeTime, toPar }
 import { IconCheck, IconLogout, IconPlus, IconSettings, IconTrophy } from '../components/icons';
 import type { Stats, User } from '../types';
 
-const COLORS = ['#1D3B2E', '#C2A76A', '#BE3A2B', '#4A574F', '#C2A76A', '#163025', '#7C8E84', '#4A574F'];
+const COLORS = ['#166747', '#1B7A55', '#4D94B5', '#A9822F', '#C05B4D', '#5B7A8C', '#345D4C', '#74857C'];
 const TEES = ['Red', 'Yellow', 'White', 'Blue', 'Championship'];
 const PROVINCES = [
   'Eastern Cape', 'Free State', 'Gauteng', 'KwaZulu-Natal', 'Limpopo',

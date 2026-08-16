@@ -10,18 +10,20 @@ Golf for South African clubs and the golfers who play them, in two halves:
 
 Built mobile-first as an installable PWA. Money is in rands, distances in metres.
 
-## Visual direction
+## Visual direction — "Morning Air"
 
-Painted leaderboard green (`#0E2019`) for chrome, fescue gold (`#C2A76A`) for accents, and red
-(`#BE3A2B`) held back for its tournament meanings — under par, and money owed.
+The 6am tee time: screens sit on a soft ambient gradient (pale sky `#DCEFF7` into mist into
+turf `#DFF0E2`), content lives on frosted glass panels, and one deep fairway green (`#166747`)
+does all the interaction work. Red (`#C03A2B`) is still held back for its tournament
+meanings — under par, and money owed.
 
-**Screens run light** (`#ECEEE9`), deliberately: golfers read them outdoors in glare. Archivo Black
-sets the wordmark and headings, IBM Plex Sans the interface, and IBM Plex Mono every time, price
-and position, so numbers line up in columns. All three are bundled via `@fontsource` rather than
-fetched from a CDN, so typography survives offline.
+**Text stays near-black** (`#0F1F18`), deliberately: golfers read these screens outdoors, so
+atmosphere lives in backgrounds, never in type. IBM Plex Sans sets the interface and headings,
+IBM Plex Mono every time, price and position, so numbers line up in columns, and Archivo Black
+survives in exactly one place — the wordmark. All three are bundled via `@fontsource` rather
+than fetched from a CDN, so typography survives offline.
 
-The **cutline** — a 3px rule with a mono tag — is a working divider, not a logo motif: it sits
-under the wordmark and above every ledger and section. If it ever becomes ornament, cut it.
+The full token-by-token system is in [STYLEGUIDE.md](STYLEGUIDE.md).
 
 > **On the data.** Club names, towns, provinces, course names and pars are real. Stroke indexes,
 > hole lengths and green fees are generated sample data — not official scorecards or live rates.

@@ -5,11 +5,11 @@
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#ECEEE9",
-  "theme_color": "#0E2019",
+  "background_color": "#F2F8F7",
+  "theme_color": "#DCEFF7",
   "icons": [
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' fill='%230E2019'/%3E%3Crect x='64' y='236' width='384' height='40' fill='%23C2A76A'/%3E%3C/svg%3E",
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='120' fill='%23166747'/%3E%3Crect x='64' y='236' width='384' height='40' rx='20' fill='%23F2F8F7'/%3E%3C/svg%3E",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
