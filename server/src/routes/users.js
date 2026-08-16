@@ -6,17 +6,18 @@ import { buildLeaderboard } from '../scoring.js';
 const router = Router();
 
 /** Player search used when building a game roster. */
-router.get('/', requireAuth, (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   const q = `%${String(req.query.q || '').trim()}%`;
-  const rows = all(
-    `SELECT * FROM users WHERE (name LIKE ? OR email LIKE ?) AND id != ? ORDER BY name LIMIT 20`,
+  // ILIKE: Postgres LIKE is case-sensitive where SQLite's was not.
+  const rows = await all(
+    `SELECT * FROM users WHERE (name ILIKE ? OR email ILIKE ?) AND id != ? ORDER BY name LIMIT 20`,
     q, q, req.user.id,
   );
   res.json({ users: rows.map(publicUser) });
 });
 
-function roundsFor(userId) {
-  const games = all(
+async function roundsFor(userId) {
+  const games = await all(
     `SELECT g.* FROM games g
      JOIN game_players p ON p.game_id = g.id
      WHERE p.user_id = ? AND g.status = 'finished'
@@ -24,14 +25,21 @@ function roundsFor(userId) {
     userId,
   );
 
-  return games.map((game) => {
-    const course = get('SELECT * FROM courses WHERE id = ?', game.course_id);
-    const players = all('SELECT * FROM game_players WHERE game_id = ?', game.id);
-    const scores = all('SELECT * FROM scores WHERE game_id = ?', game.id);
+  const rounds = [];
+  for (const game of games) {
+    // Each round needs three lookups. Over a network database they are issued
+    // together rather than one after another.
+    const [course, players, scores] = await Promise.all([
+      get('SELECT * FROM courses WHERE id = ?', game.course_id),
+      all('SELECT * FROM game_players WHERE game_id = ?', game.id),
+      all('SELECT * FROM scores WHERE game_id = ?', game.id),
+    ]);
+
     const board = buildLeaderboard(game, course, players, scores);
     const me = board.players.find((p) => p.userId === userId);
     const row = board.rows.find((r) => r.userId === userId || r.playerId === `team-${me?.team}`);
-    return {
+
+    rounds.push({
       gameId: game.id,
       name: game.name,
       format: game.format,
@@ -47,12 +55,15 @@ function roundsFor(userId) {
       counts: me?.counts ?? {},
       position: row?.position ?? null,
       fieldSize: board.rows.length,
-    };
-  });
+    });
+  }
+
+  return rounds;
 }
 
-function statsFor(userId) {
-  const rounds = roundsFor(userId).filter((r) => r.thru >= 9);
+/** Takes the already-loaded rounds so the profile route reads them only once. */
+function statsFor(allRounds) {
+  const rounds = allRounds.filter((r) => r.thru >= 9);
   const complete = rounds.filter((r) => r.thru >= 18);
   const sum = (key) => rounds.reduce((s, r) => s + (r[key] || 0), 0);
   const countTotal = (key) => rounds.reduce((s, r) => s + (r.counts?.[key] || 0), 0);
@@ -84,11 +95,14 @@ function statsFor(userId) {
   };
 }
 
-router.get('/:id', requireAuth, (req, res) => {
+router.get('/:id', requireAuth, async (req, res) => {
   const id = req.params.id === 'me' ? req.user.id : req.params.id;
-  const user = get('SELECT * FROM users WHERE id = ?', id);
+  const user = await get('SELECT * FROM users WHERE id = ?', id);
   if (!user) return res.status(404).json({ error: 'Player not found' });
-  res.json({ user: publicUser(user), stats: statsFor(id), rounds: roundsFor(id).slice(0, 20) });
+
+  // Built once and shared: this used to run the whole round history twice.
+  const rounds = await roundsFor(id);
+  res.json({ user: publicUser(user), stats: statsFor(rounds), rounds: rounds.slice(0, 20) });
 });
 
 export default router;

@@ -12,12 +12,12 @@ import { ALLOWANCES, isTeamFormat, playingHandicap } from './scoring.js';
 const uid = (p) => `${p}_${crypto.randomUUID().slice(0, 8)}`;
 
 /** Short, unambiguous join code — no O/0 or I/1 confusion. */
-export function newCode() {
+export async function newCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code;
   do {
     code = Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
-  } while (get('SELECT id FROM games WHERE code = ?', code));
+  } while (await get('SELECT id FROM games WHERE code = ?', code));
   return code;
 }
 
@@ -25,17 +25,17 @@ export function newCode() {
  * Adds one player to a round. `entry` may name a registered user by id or be a
  * guest with just a name and handicap.
  */
-export function addRoundPlayer(gameId, course, format, holeCount, entry, index) {
-  const user = entry.userId ? get('SELECT * FROM users WHERE id = ?', entry.userId) : null;
+export async function addRoundPlayer(gameId, course, format, holeCount, entry, index) {
+  const user = entry.userId ? await get('SELECT * FROM users WHERE id = ?', entry.userId) : null;
   if (entry.userId && !user) return null;
-  if (user && get('SELECT id FROM game_players WHERE game_id = ? AND user_id = ?', gameId, user.id)) return null;
+  if (user && await get('SELECT id FROM game_players WHERE game_id = ? AND user_id = ?', gameId, user.id)) return null;
 
   const handicapIndex = Number(entry.handicapIndex ?? user?.handicap_index ?? 18);
   const ph = playingHandicap(handicapIndex, course, holeCount, ALLOWANCES[format] ?? 1);
   const playerId = uid('ply');
   const team = isTeamFormat(format) ? (entry.team || (index % 2 === 0 ? 'A' : 'B')) : null;
 
-  run(
+  await run(
     `INSERT INTO game_players (id, game_id, user_id, display_name, avatar_color, handicap_index, playing_handicap, team, joined_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     playerId, gameId, user?.id ?? null,
@@ -53,23 +53,27 @@ export function addRoundPlayer(gameId, course, format, holeCount, entry, index) 
  * to a future tee time — a scheduled round waits quietly until the first score
  * is entered rather than pretending to be in play.
  */
-export function createRound({
+export async function createRound({
   courseId, name, format = 'stableford', scoring = 'net',
   holeCount = 18, startHole = 1, stake = null, status = 'live',
   createdBy, players = [], createdAt = now(),
 }) {
-  const course = get('SELECT * FROM courses WHERE id = ?', courseId);
+  const course = await get('SELECT * FROM courses WHERE id = ?', courseId);
   if (!course) return null;
 
   const holes = Number(holeCount) === 9 ? 9 : 18;
   const gameId = uid('gme');
-  run(
+  await run(
     `INSERT INTO games (id, code, name, course_id, format, scoring, hole_count, start_hole, status, stake, created_by, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    gameId, newCode(), name?.trim() || `${course.name} round`, course.id, format, scoring,
+    gameId, await newCode(), name?.trim() || `${course.name} round`, course.id, format, scoring,
     holes, Number(startHole) === 10 ? 10 : 1, status, stake, createdBy, createdAt,
   );
 
-  players.forEach((entry, index) => addRoundPlayer(gameId, course, format, holes, entry, index));
+  // Sequential, not concurrent: addRoundPlayer checks whether the user is
+  // already in the field, and that check has to see the preceding inserts.
+  for (const [index, entry] of players.entries()) {
+    await addRoundPlayer(gameId, course, format, holes, entry, index);
+  }
   return gameId;
 }

@@ -1,0 +1,23 @@
+# Dependencies and build output are produced inside the image, never copied in.
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
+*.tsbuildinfo
+
+# Local SQLite database — must never leak into a deployed image.
+server/data/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Repo tooling that has no bearing on the running app
+.git/
+.github/
+.claude/
+README.md
+*.log
+.DS_Store
