@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { db, all, get, run, now } from './db.js';
+import { all, close, get, run, now } from './db.js';
 import { CLUBS, buildHoles, totalPar } from './sa-courses.js';
 import { hashPassword } from './auth.js';
 import { playingHandicap, ALLOWANCES, activeHoles } from './scoring.js';
@@ -14,9 +14,9 @@ const pick = (list) => list[Math.floor(Math.random() * list.length)];
 /* Clubs and courses                                                   */
 /* ------------------------------------------------------------------ */
 
-export function seedClubs() {
+export async function seedClubs() {
   for (const club of CLUBS) {
-    run(
+    await run(
       `INSERT INTO clubs (id, name, slug, city, province, country, blurb, phone, email, website, brand_color, status, created_at)
        VALUES (?, ?, ?, ?, ?, 'South Africa', ?, ?, ?, ?, ?, 'active', ?)
        ON CONFLICT(id) DO UPDATE SET
@@ -29,7 +29,7 @@ export function seedClubs() {
 
     for (const course of club.courses) {
       const holes = buildHoles(course.id, course.pars);
-      run(
+      await run(
         `INSERT INTO courses (id, name, location, country, tee, par, rating, slope, holes_json, club_id,
            interval_minutes, first_tee, last_tee, slot_capacity, weekday_fee_cents, weekend_fee_cents,
            cart_fee_cents, booking_window_days, bookable, cancellation_hours)
@@ -70,11 +70,11 @@ const STAFF = [
   { name: 'Fancourt Golf Office', email: 'golf@fancourt.example', clubId: 'clb_fancourt' },
 ];
 
-function upsertUser({ name, email, hcp = 18, club = null, color = '#1D3B2E' }) {
-  const existing = get('SELECT * FROM users WHERE email = ?', email);
+async function upsertUser({ name, email, hcp = 18, club = null, color = '#1D3B2E' }) {
+  const existing = await get('SELECT * FROM users WHERE email = ?', email);
   if (existing) return existing;
   const userId = id('usr');
-  run(
+  await run(
     `INSERT INTO users (id, name, email, password_hash, handicap_index, home_club, avatar_color, bio, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     userId, name, email, hashPassword('golf1234'), hcp, club, color,
@@ -83,12 +83,16 @@ function upsertUser({ name, email, hcp = 18, club = null, color = '#1D3B2E' }) {
   return get('SELECT * FROM users WHERE id = ?', userId);
 }
 
-function seedPeople() {
-  const golfers = GOLFERS.map(upsertUser);
+async function seedPeople() {
+  // Sequential: upsertUser reads before it writes, so these must not race.
+  const golfers = [];
+  for (const golfer of GOLFERS) golfers.push(await upsertUser(golfer));
+
   for (const member of STAFF) {
-    const user = upsertUser({ name: member.name, email: member.email, hcp: 15, club: null, color: '#1D3B2E' });
-    run(
-      'INSERT OR IGNORE INTO club_admins (club_id, user_id, role, created_at) VALUES (?, ?, ?, ?)',
+    const user = await upsertUser({ name: member.name, email: member.email, hcp: 15, club: null, color: '#1D3B2E' });
+    await run(
+      `INSERT INTO club_admins (club_id, user_id, role, created_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (club_id, user_id) DO NOTHING`,
       member.clubId, user.id, 'owner', now(),
     );
   }
@@ -96,19 +100,19 @@ function seedPeople() {
 }
 
 /** One club left pending so the approval screen has something to act on. */
-function seedPendingClub(owner) {
-  if (get("SELECT id FROM clubs WHERE status = 'pending'")) return;
+async function seedPendingClub(owner) {
+  if (await get("SELECT id FROM clubs WHERE status = 'pending'")) return;
   const clubId = id('clb');
-  run(
+  await run(
     `INSERT INTO clubs (id, name, slug, city, province, country, blurb, phone, email, website, brand_color, status, created_at)
      VALUES (?, ?, ?, ?, ?, 'South Africa', ?, ?, ?, NULL, '#1D3B2E', 'pending', ?)`,
     clubId, 'Bloemfontein Golf Club', 'bloemfontein-golf-club', 'Bloemfontein', 'Free State',
     'Free State parkland, applying to join Cutline.', '051 522 3311', 'proshop@bloemgolf.example', ago(90),
   );
-  run('INSERT INTO club_admins (club_id, user_id, role, created_at) VALUES (?, ?, ?, ?)', clubId, owner.id, 'owner', now());
+  await run('INSERT INTO club_admins (club_id, user_id, role, created_at) VALUES (?, ?, ?, ?)', clubId, owner.id, 'owner', now());
 
   const holes = buildHoles('bloemfontein', [4, 4, 3, 5, 4, 4, 3, 4, 5, 4, 3, 4, 5, 4, 4, 3, 4, 5]);
-  run(
+  await run(
     `INSERT INTO courses (id, name, location, country, tee, par, rating, slope, holes_json, club_id,
        interval_minutes, first_tee, last_tee, slot_capacity, weekday_fee_cents, weekend_fee_cents,
        cart_fee_cents, booking_window_days, bookable, cancellation_hours)
@@ -128,10 +132,10 @@ const newRef = () => `CL-${Array.from({ length: 6 }, () => pick([...REF_ALPHABET
  * Two weeks either side of today across a handful of clubs, in a spread of
  * payment states, so the admin console has real numbers to report on.
  */
-function seedBookings(golfers) {
-  if (get('SELECT COUNT(*) AS n FROM bookings').n > 0) return;
+async function seedBookings(golfers) {
+  if ((await get('SELECT COUNT(*)::int AS n FROM bookings')).n > 0) return;
 
-  const courses = all(
+  const courses = await all(
     `SELECT c.* FROM courses c JOIN clubs cl ON cl.id = c.club_id
      WHERE cl.status = 'active' AND c.club_id IN ('clb_steenberg','clb_fancourt','clb_dezalze','clb_royaljhb','clb_durbancc')`,
   );
@@ -150,7 +154,7 @@ function seedBookings(golfers) {
       const time = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
       const cart = Math.random() > 0.65;
 
-      if (get('SELECT id FROM bookings WHERE course_id = ? AND date = ? AND time = ?', course.id, date, time)) continue;
+      if (await get('SELECT id FROM bookings WHERE course_id = ? AND date = ? AND time = ?', course.id, date, time)) continue;
 
       const pricing = quote(course, date, players, cart);
       const roll = Math.random();
@@ -171,7 +175,7 @@ function seedBookings(golfers) {
 
       const bookingId = id('bkg');
       const stamp = ago(Math.abs(dayOffset) * 1440 + 120);
-      run(
+      await run(
         `INSERT INTO bookings (id, ref, club_id, course_id, user_id, date, time, players, guest_names,
            status, fee_cents, paid_cents, payment_status, cart, notes, source, cancellation_hours,
            created_at, updated_at, cancelled_at, late_cancel, checked_in_at)
@@ -186,11 +190,11 @@ function seedBookings(golfers) {
 
       const partners = golfers.filter((p) => p.id !== organiser.id).slice(0, players - 1);
       let remaining = paid;
-      pricing.shares.forEach((share, i) => {
+      for (const [i, share] of pricing.shares.entries()) {
         const settled = Math.min(share, remaining);
         remaining -= settled;
         const partner = partners[i - 1];
-        run(
+        await run(
           `INSERT INTO booking_players (id, booking_id, user_id, name, share_cents, paid_cents, is_organiser, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           id('bpl'), bookingId,
@@ -198,19 +202,20 @@ function seedBookings(golfers) {
           i === 0 ? organiser.name : partner?.name ?? `Guest ${i + 1}`,
           share, settled, i === 0 ? 1 : 0, stamp,
         );
-      });
+      }
 
       if (paid > 0) {
-        run(
+        await run(
           `INSERT INTO booking_payments (id, booking_id, player_id, user_id, amount_cents, method, status, note, created_at)
            VALUES (?, ?, NULL, ?, ?, ?, 'settled', 'Seeded payment', ?)`,
           id('pay'), bookingId, organiser.id, paid, pick(['card', 'eft', 'pro_shop']), stamp,
         );
       }
 
-      run(
-        `INSERT OR IGNORE INTO club_customers (club_id, user_id, notes, tags, marketing_opt_in, first_seen, updated_at)
-         VALUES (?, ?, NULL, NULL, ?, ?, ?)`,
+      await run(
+        `INSERT INTO club_customers (club_id, user_id, notes, tags, marketing_opt_in, first_seen, updated_at)
+         VALUES (?, ?, NULL, NULL, ?, ?, ?)
+         ON CONFLICT (club_id, user_id) DO NOTHING`,
         course.club_id, organiser.id, Math.random() > 0.5 ? 1 : 0, stamp, stamp,
       );
     }
@@ -227,10 +232,10 @@ function simulateStrokes(hole) {
   return Math.max(1, hole.par + over);
 }
 
-function createGame({ name, courseId, format, scoring, players, status, holesPlayed, createdBy, createdAt }) {
-  const course = get('SELECT * FROM courses WHERE id = ?', courseId);
+async function createGame({ name, courseId, format, scoring, players, status, holesPlayed, createdBy, createdAt }) {
+  const course = await get('SELECT * FROM courses WHERE id = ?', courseId);
   const gid = id('gme');
-  run(
+  await run(
     `INSERT INTO games (id, code, name, course_id, format, scoring, hole_count, start_hole, status, stake, created_by, created_at, finished_at)
      VALUES (?, ?, ?, ?, ?, ?, 18, 1, ?, NULL, ?, ?, ?)`,
     gid, code(), name, courseId, format, scoring, status, createdBy, createdAt,
@@ -239,10 +244,10 @@ function createGame({ name, courseId, format, scoring, players, status, holesPla
 
   const holes = activeHoles(course, 18, 1);
   const created = [];
-  players.forEach((u, i) => {
+  for (const [i, u] of players.entries()) {
     const ph = playingHandicap(u.handicap_index, course, 18, ALLOWANCES[format] ?? 1);
     const pid = id('ply');
-    run(
+    await run(
       `INSERT INTO game_players (id, game_id, user_id, display_name, avatar_color, handicap_index, playing_handicap, team, joined_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       pid, gid, u.id, u.name, u.avatar_color, u.handicap_index, ph,
@@ -250,11 +255,11 @@ function createGame({ name, courseId, format, scoring, players, status, holesPla
       createdAt,
     );
     created.push({ id: pid });
-  });
+  }
 
   for (const p of created) {
     for (const hole of holes.slice(0, holesPlayed)) {
-      run(
+      await run(
         'INSERT INTO scores (game_id, player_id, hole, strokes, putts, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
         gid, p.id, hole.hole, simulateStrokes(hole), 1 + Math.round(Math.random() * 1.6), createdAt,
       );
@@ -263,35 +268,35 @@ function createGame({ name, courseId, format, scoring, players, status, holesPla
   return gid;
 }
 
-function seedGames(users) {
-  if (get('SELECT COUNT(*) AS n FROM games').n > 0) return;
+async function seedGames(users) {
+  if ((await get('SELECT COUNT(*)::int AS n FROM games')).n > 0) return;
   const [keagan, marcus, priya, tom, sara, danny] = users;
 
-  const live = createGame({
+  const live = await createGame({
     name: 'Saturday Medal', courseId: 'crs_steenberg', format: 'stableford', scoring: 'net',
     players: [keagan, marcus, priya, tom], status: 'live', holesPlayed: 11,
     createdBy: keagan.id, createdAt: ago(150),
   });
 
-  const finished = createGame({
+  const finished = await createGame({
     name: 'Sunday Fourball', courseId: 'crs_fancourt_montagu', format: 'fourball', scoring: 'net',
     players: [keagan, danny, sara, marcus], status: 'finished', holesPlayed: 18,
     createdBy: marcus.id, createdAt: ago(60 * 26),
   });
 
-  createGame({
+  await createGame({
     name: 'Skins at Leopard Creek', courseId: 'crs_leopard_creek', format: 'skins', scoring: 'net',
     players: [keagan, tom, danny], status: 'finished', holesPlayed: 18,
     createdBy: tom.id, createdAt: ago(60 * 24 * 6),
   });
 
   const posts = [
-    [finished, marcus.id, 'Danny holed out from 140 on 14. Absolute filth. ðŸ¦', ago(60 * 25)],
+    [finished, marcus.id, 'Danny holed out from 140 on 14. Absolute filth. 🦅', ago(60 * 25)],
     [finished, sara.id, 'First time under 100 net. Drinks at the turn next week.', ago(60 * 24)],
     [live, priya.id, 'Wind coming off False Bay on the back nine, hang onto your hats.', ago(45)],
   ];
   for (const [gameId, userId, body, createdAt] of posts) {
-    run(
+    await run(
       'INSERT INTO posts (id, game_id, user_id, kind, body, meta_json, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?)',
       id('pst'), gameId, userId, 'text', body, createdAt,
     );
@@ -300,23 +305,33 @@ function seedGames(users) {
 
 /* ------------------------------------------------------------------ */
 
-export function seed() {
-  seedClubs();
-  const golfers = seedPeople();
-  seedPendingClub(golfers[0]);
-  seedBookings(golfers);
-  seedGames(golfers);
+export async function seed() {
+  await seedClubs();
+  const golfers = await seedPeople();
+  await seedPendingClub(golfers[0]);
+  await seedBookings(golfers);
+  await seedGames(golfers);
+
+  const [clubs, courses, users, bookings, games] = await Promise.all([
+    get('SELECT COUNT(*)::int AS n FROM clubs'),
+    get('SELECT COUNT(*)::int AS n FROM courses'),
+    get('SELECT COUNT(*)::int AS n FROM users'),
+    get('SELECT COUNT(*)::int AS n FROM bookings'),
+    get('SELECT COUNT(*)::int AS n FROM games'),
+  ]);
 
   return {
-    clubs: get('SELECT COUNT(*) AS n FROM clubs').n,
-    courses: get('SELECT COUNT(*) AS n FROM courses').n,
-    users: get('SELECT COUNT(*) AS n FROM users').n,
-    bookings: get('SELECT COUNT(*) AS n FROM bookings').n,
-    games: get('SELECT COUNT(*) AS n FROM games').n,
+    clubs: clubs.n,
+    courses: courses.n,
+    users: users.n,
+    bookings: bookings.n,
+    games: games.n,
   };
 }
 
 if (process.argv[1] && process.argv[1].endsWith('seed.js')) {
-  console.log('Seeded:', seed());
-  db.close();
+  const { migrate } = await import('./db.js');
+  await migrate();
+  console.log('Seeded:', await seed());
+  await close();
 }

@@ -7,7 +7,7 @@ const router = Router();
 
 const COLORS = ['#1D3B2E', '#C2A76A', '#BE3A2B', '#4A574F', '#C2A76A', '#163025', '#7C8E84', '#4A574F'];
 
-router.post('/register', (req, res) => {
+router.post('/register', async (req, res) => {
   const { name, email, password, handicapIndex = 18, homeClub = null } = req.body || {};
   if (!name?.trim() || !email?.trim() || !password) {
     return res.status(400).json({ error: 'Name, email and password are required' });
@@ -15,25 +15,25 @@ router.post('/register', (req, res) => {
   if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
 
   const normalised = email.trim().toLowerCase();
-  if (get('SELECT id FROM users WHERE email = ?', normalised)) {
+  if (await get('SELECT id FROM users WHERE email = ?', normalised)) {
     return res.status(409).json({ error: 'That email is already registered' });
   }
 
   const id = `usr_${crypto.randomUUID().slice(0, 8)}`;
-  run(
+  await run(
     `INSERT INTO users (id, name, email, password_hash, handicap_index, home_club, avatar_color, bio, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id, name.trim(), normalised, hashPassword(password), Number(handicapIndex) || 0, homeClub,
     COLORS[Math.floor(Math.random() * COLORS.length)], null, now(),
   );
 
-  const user = get('SELECT * FROM users WHERE id = ?', id);
+  const user = await get('SELECT * FROM users WHERE id = ?', id);
   res.status(201).json({ token: createToken(id), user: publicUser(user) });
 });
 
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
-  const user = get('SELECT * FROM users WHERE email = ?', String(email || '').trim().toLowerCase());
+  const user = await get('SELECT * FROM users WHERE email = ?', String(email || '').trim().toLowerCase());
   if (!user || !verifyPassword(String(password || ''), user.password_hash)) {
     return res.status(401).json({ error: 'Wrong email or password' });
   }
@@ -58,7 +58,7 @@ function avatarProblem(url) {
   return null;
 }
 
-router.patch('/me', requireAuth, (req, res) => {
+router.patch('/me', requireAuth, async (req, res) => {
   const {
     name, handicapIndex, homeClub, bio, avatarColor, avatarUrl,
     phone, city, province, preferredTee, dominantHand, ridePreference,
@@ -71,23 +71,26 @@ router.patch('/me', requireAuth, (req, res) => {
   const num = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
   const text = (v) => (v === undefined ? null : v);
 
-  run(
+  // Every placeholder inside COALESCE carries an explicit cast. Postgres infers
+  // a parameter's type from context and cannot do so for a bare NULL here — it
+  // fails with "could not determine data type of parameter". SQLite did not care.
+  await run(
     `UPDATE users SET
-       name = COALESCE(?, name),
-       handicap_index = COALESCE(?, handicap_index),
-       home_club = COALESCE(?, home_club),
-       bio = COALESCE(?, bio),
-       avatar_color = COALESCE(?, avatar_color),
-       avatar_url = COALESCE(?, avatar_url),
-       phone = COALESCE(?, phone),
-       city = COALESCE(?, city),
-       province = COALESCE(?, province),
-       preferred_tee = COALESCE(?, preferred_tee),
-       dominant_hand = COALESCE(?, dominant_hand),
-       ride_preference = COALESCE(?, ride_preference),
-       goal_handicap = COALESCE(?, goal_handicap),
-       playing_since = COALESCE(?, playing_since),
-       favourite_course = COALESCE(?, favourite_course)
+       name = COALESCE(?::text, name),
+       handicap_index = COALESCE(?::double precision, handicap_index),
+       home_club = COALESCE(?::text, home_club),
+       bio = COALESCE(?::text, bio),
+       avatar_color = COALESCE(?::text, avatar_color),
+       avatar_url = COALESCE(?::text, avatar_url),
+       phone = COALESCE(?::text, phone),
+       city = COALESCE(?::text, city),
+       province = COALESCE(?::text, province),
+       preferred_tee = COALESCE(?::text, preferred_tee),
+       dominant_hand = COALESCE(?::text, dominant_hand),
+       ride_preference = COALESCE(?::text, ride_preference),
+       goal_handicap = COALESCE(?::double precision, goal_handicap),
+       playing_since = COALESCE(?::integer, playing_since),
+       favourite_course = COALESCE(?::text, favourite_course)
      WHERE id = ?`,
     name?.trim() ?? null, num(handicapIndex), text(homeClub), text(bio),
     text(avatarColor), avatarUrl === '' ? null : text(avatarUrl),
@@ -99,10 +102,10 @@ router.patch('/me', requireAuth, (req, res) => {
 
   // COALESCE keeps existing values, so clearing the photo needs its own write.
   if (avatarUrl === '' || avatarUrl === null) {
-    run('UPDATE users SET avatar_url = NULL WHERE id = ?', req.user.id);
+    await run('UPDATE users SET avatar_url = NULL WHERE id = ?', req.user.id);
   }
 
-  res.json({ user: publicUser(get('SELECT * FROM users WHERE id = ?', req.user.id)) });
+  res.json({ user: publicUser(await get('SELECT * FROM users WHERE id = ?', req.user.id)) });
 });
 
 export default router;

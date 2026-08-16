@@ -47,18 +47,22 @@ export function readToken(token) {
 
 /* ---------- express middleware ---------- */
 
-function userFromRequest(req) {
+async function userFromRequest(req) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : req.query.token;
   const data = readToken(token);
   if (!data) return null;
-  return get('SELECT * FROM users WHERE id = ?', data.sub) || null;
+  return (await get('SELECT * FROM users WHERE id = ?', data.sub)) || null;
 }
 
 /** Attaches req.user when a valid token is present, but never blocks. */
-export function attachUser(req, _res, next) {
-  req.user = userFromRequest(req);
-  next();
+export async function attachUser(req, _res, next) {
+  try {
+    req.user = await userFromRequest(req);
+    next();
+  } catch (err) {
+    next(err);
+  }
 }
 
 /** Blocks the request unless a valid token is present. */

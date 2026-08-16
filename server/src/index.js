@@ -1,3 +1,9 @@
+// Patches Express 4 so a rejected promise inside an async handler reaches the
+// error middleware instead of hanging the request until it times out. Every
+// route is async now, so this is load-bearing. It must be imported first: it
+// patches the Router prototype, and the route modules below build their routers
+// as they are imported.
+import 'express-async-errors';
 import express from 'express';
 import cors from 'cors';
 import http from 'node:http';
@@ -7,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 import { attachUser } from './auth.js';
 import { attachRealtime } from './realtime.js';
+import { close, migrate } from './db.js';
 import { seed } from './seed.js';
 
 import authRoutes from './routes/auth.js';
@@ -20,10 +27,36 @@ import bookingRoutes from './routes/bookings.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4000);
 
-seed();
+// Bring the schema up to date before anything can serve a request. Applied
+// migrations are recorded, so this is a no-op once the database is current.
+await migrate();
+
+// seed() inserts 15 clubs, demo users and sample rounds. That is what a fresh
+// developer database wants and the opposite of what production wants, where it
+// would re-run on every restart — so outside development it is opt-in.
+if (process.env.NODE_ENV !== 'production' || process.env.SEED_ON_BOOT === 'true') {
+  await seed();
+}
 
 const app = express();
-app.use(cors());
+
+// In production the PWA is served from this same origin, so no cross-origin
+// request should be permitted unless one is configured explicitly (a native
+// client, say). Development stays permissive.
+const allowedOrigins = (process.env.CORS_ORIGIN ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(
+  cors(
+    allowedOrigins.length
+      ? { origin: allowedOrigins }
+      : process.env.NODE_ENV === 'production'
+        ? { origin: false }
+        : {},
+  ),
+);
 app.use(express.json({ limit: '1mb' }));
 app.use(attachUser);
 
@@ -55,3 +88,15 @@ attachRealtime(server);
 server.listen(PORT, () => {
   console.log(`⛳  Cutline API listening on http://localhost:${PORT}`);
 });
+
+// Fly sends SIGTERM before it replaces a machine. Close the listener and the
+// connection pool so in-flight work finishes and Supabase reclaims the
+// connections immediately rather than waiting for them to time out.
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    server.close(async () => {
+      await close();
+      process.exit(0);
+    });
+  });
+}

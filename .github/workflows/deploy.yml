@@ -1,0 +1,35 @@
+name: Deploy
+
+on:
+  push:
+    branches: ['main']
+  # Lets you re-run a deploy from the Actions tab without pushing a commit.
+  workflow_dispatch:
+
+# One deploy at a time. Never cancel a run already in flight — a half-applied
+# release is worse than a queued one.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Fly.io
+    runs-on: ubuntu-latest
+    # Without the secret, flyctl fails with an opaque auth error. Skipping is
+    # clearer, and keeps forks from running a deploy they can never authenticate.
+    if: github.repository == 'KLangford21/Cutline'
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # --remote-only builds the image on Fly's builders rather than on the
+      # runner, so the runner never needs a Docker daemon.
+      - name: Deploy
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
