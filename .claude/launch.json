@@ -11,7 +11,8 @@
       "name": "api",
       "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
       "runtimeArgs": ["server/src/index.js"],
-      "port": 4000
+      "port": 4000,
+      "env": { "CUTLINE_SECRET": "dev-local-secret-for-preview-only" }
     }
   ]
 }
